@@ -1726,7 +1726,7 @@
                         "parameters": {
                           "containerName": "datasets",
                           "folderPath": {
-                            "value": "@pipeline().parameters.objectApiName",
+                            "value": "@concat(pipeline().parameters.tenantId, '/', pipeline().parameters.objectApiName)",
                             "type": "Expression"
                           },
                           "fileName": {
@@ -1750,6 +1750,10 @@
                   "whereClause": {
                     "type": "String",
                     "defaultValue": ""
+                  },
+                  "tenantId": {
+                    "type": "String",
+                    "defaultValue": "default"
                   }
                 }
               },
