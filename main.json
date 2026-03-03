@@ -126,6 +126,27 @@
         "example": "https://yourvendorstorage.blob.core.windows.net/releases/v1.0.0/functions.zip?sp=r&se=2026-12-31T23:59:59Z&sig=...",
         "description": "Function App package URL (Azure Blob Storage with SAS token)"
       }
+    },
+    "platformRegistrationUrl": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "AWS platform registration endpoint URL. Leave empty to skip platform registration."
+      }
+    },
+    "platformRegistrationSecret": {
+      "type": "securestring",
+      "defaultValue": "",
+      "metadata": {
+        "description": "HMAC shared secret for platform registration authentication"
+      }
+    },
+    "contactEmail": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Customer contact email for platform tenant record"
+      }
     }
   },
   "variables": {
@@ -1178,6 +1199,86 @@
         "storage"
       ]
     },
+    "platformRegIdentity": {
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "apiVersion": "2023-01-31",
+      "name": "[format('{0}-platform-reg-id', parameters('solutionName'))]",
+      "location": "[parameters('location')]"
+    },
+    "platformRegRoleAssignment": {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "name": "[guid(resourceGroup().id, 'platformRegContributor')]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b24988ac-6180-42a0-ab88-20f7382dd24c')]",
+        "principalId": "[reference('platformRegIdentity').principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "platformRegIdentity"
+      ]
+    },
+    "platformRegistration": {
+      "type": "Microsoft.Resources/deploymentScripts",
+      "apiVersion": "2023-08-01",
+      "name": "[format('{0}-platform-reg', parameters('solutionName'))]",
+      "location": "[parameters('location')]",
+      "kind": "AzureCLI",
+      "identity": {
+        "type": "UserAssigned",
+        "userAssignedIdentities": {
+          "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-platform-reg-id', parameters('solutionName')))]": {}
+        }
+      },
+      "properties": {
+        "azCliVersion": "2.50.0",
+        "timeout": "PT5M",
+        "retentionInterval": "P1D",
+        "environmentVariables": [
+          {
+            "name": "REGISTRATION_URL",
+            "value": "[parameters('platformRegistrationUrl')]"
+          },
+          {
+            "name": "REGISTRATION_SECRET",
+            "secureValue": "[parameters('platformRegistrationSecret')]"
+          },
+          {
+            "name": "FUNCTION_APP_URL",
+            "value": "[reference('functions').outputs.functionAppUrl.value]"
+          },
+          {
+            "name": "FUNCTION_KEY",
+            "secureValue": "[reference('functions').outputs.functionAppDefaultKey.value]"
+          },
+          {
+            "name": "FUNCTION_APP_NAME",
+            "value": "[reference('functions').outputs.functionAppName.value]"
+          },
+          {
+            "name": "RESOURCE_GROUP",
+            "value": "[resourceGroup().name]"
+          },
+          {
+            "name": "ORG_NAME",
+            "value": "[parameters('solutionName')]"
+          },
+          {
+            "name": "CONTACT_EMAIL",
+            "value": "[parameters('contactEmail')]"
+          },
+          {
+            "name": "PRICING_TIER",
+            "value": "[parameters('pricingTier')]"
+          }
+        ],
+        "scriptContent": "#!/bin/bash\nset -e\n\n# Set output file path with fallback\nOUTPUT_FILE=\"${AZ_SCRIPTS_OUTPUT_FILE:-/mnt/azscripts/azscriptoutput/scriptoutputs.json}\"\n\n# Skip if no registration URL provided\nif [ -z \"$REGISTRATION_URL\" ]; then\n  echo \"No platform registration URL provided, skipping registration\"\n  echo '{\"platformTenantId\":\"\",\"platformClientId\":\"\",\"platformRegistered\":\"skipped\"}' > \"$OUTPUT_FILE\"\n  exit 0\nfi\n\n# Map ARM pricing tier to platform tier\ncase \"$PRICING_TIER\" in\n  starter) PLATFORM_TIER=\"basic\" ;;\n  *) PLATFORM_TIER=\"$PRICING_TIER\" ;;\nesac\n\n# Build request body\nBODY=$(cat <<EOJSON\n{\n  \"functionAppUrl\": \"https://$FUNCTION_APP_URL\",\n  \"functionKey\": \"$FUNCTION_KEY\",\n  \"orgName\": \"$ORG_NAME\",\n  \"contactEmail\": \"$CONTACT_EMAIL\",\n  \"tier\": \"$PLATFORM_TIER\"\n}\nEOJSON\n)\n\n# Compute HMAC-SHA256 signature\nSIGNATURE=$(echo -n \"$BODY\" | openssl dgst -sha256 -hmac \"$REGISTRATION_SECRET\" | awk '{print $2}')\n\n# Call registration endpoint with retry\nMAX_RETRIES=3\nRETRY=0\nwhile [ $RETRY -lt $MAX_RETRIES ]; do\n  HTTP_CODE=$(curl -s -o /tmp/response.json -w '%{http_code}' \\\n    -X POST \"$REGISTRATION_URL\" \\\n    -H 'Content-Type: application/json' \\\n    -H \"x-platform-signature: $SIGNATURE\" \\\n    -d \"$BODY\" \\\n    --connect-timeout 10 \\\n    --max-time 30)\n\n  if [ \"$HTTP_CODE\" = \"201\" ] || [ \"$HTTP_CODE\" = \"200\" ]; then\n    break\n  fi\n\n  RETRY=$((RETRY + 1))\n  if [ $RETRY -lt $MAX_RETRIES ]; then\n    echo \"Registration attempt $RETRY failed (HTTP $HTTP_CODE), retrying in 5s...\"\n    sleep 5\n  fi\ndone\n\nif [ \"$HTTP_CODE\" != \"201\" ] && [ \"$HTTP_CODE\" != \"200\" ]; then\n  echo \"WARNING: Platform registration failed after $MAX_RETRIES attempts (HTTP $HTTP_CODE)\"\n  echo \"Response: $(cat /tmp/response.json)\"\n  echo \"Platform registration can be configured manually.\"\n  # Output empty values so ARM outputs don't fail\n  echo '{\"platformTenantId\":\"\",\"platformClientId\":\"\",\"platformRegistered\":\"false\"}' > \"$OUTPUT_FILE\"\n  exit 0\nfi\n\necho \"Platform registration successful (HTTP $HTTP_CODE)\"\nRESPONSE=$(cat /tmp/response.json)\n\n# Extract credentials from response\nTENANT_ID=$(echo \"$RESPONSE\" | python3 -c \"import sys,json; print(json.load(sys.stdin)['data']['tenantId'])\")\nCLIENT_ID=$(echo \"$RESPONSE\" | python3 -c \"import sys,json; print(json.load(sys.stdin)['data']['credentials']['clientId'])\")\nCLIENT_SECRET=$(echo \"$RESPONSE\" | python3 -c \"import sys,json; print(json.load(sys.stdin)['data']['credentials']['clientSecret'])\")\nTOKEN_ENDPOINT=$(echo \"$RESPONSE\" | python3 -c \"import sys,json; print(json.load(sys.stdin)['data']['credentials']['tokenEndpoint'])\")\n\n# Store credentials as Function App settings\naz functionapp config appsettings set \\\n  --name \"$FUNCTION_APP_NAME\" \\\n  --resource-group \"$RESOURCE_GROUP\" \\\n  --settings \\\n    PLATFORM_TENANT_ID=\"$TENANT_ID\" \\\n    PLATFORM_CLIENT_ID=\"$CLIENT_ID\" \\\n    PLATFORM_CLIENT_SECRET=\"$CLIENT_SECRET\" \\\n    PLATFORM_TOKEN_ENDPOINT=\"$TOKEN_ENDPOINT\" \\\n    PLATFORM_URL=\"$REGISTRATION_URL\" \\\n  --output none\n\necho \"Platform credentials stored in Function App settings\"\n\n# Output for ARM template\ncat <<EOJSON > \"$OUTPUT_FILE\"\n{\n  \"platformTenantId\": \"$TENANT_ID\",\n  \"platformClientId\": \"$CLIENT_ID\",\n  \"platformRegistered\": \"true\"\n}\nEOJSON\n"
+      },
+      "dependsOn": [
+        "functions",
+        "platformRegRoleAssignment"
+      ]
+    },
     "dataFactory": {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
@@ -2147,6 +2248,18 @@
     "updateSalesforceCredentials": {
       "type": "string",
       "value": "To update Salesforce credentials, redeploy the application with new values or update the Salesforce linked service in Data Factory."
+    },
+    "platformTenantId": {
+      "type": "string",
+      "value": "[reference('platformRegistration').outputs.platformTenantId]"
+    },
+    "platformClientId": {
+      "type": "string",
+      "value": "[reference('platformRegistration').outputs.platformClientId]"
+    },
+    "platformRegistered": {
+      "type": "string",
+      "value": "[reference('platformRegistration').outputs.platformRegistered]"
     }
   }
 }
