@@ -870,6 +870,9 @@
           "vnetIntegrationSubnetId": "[if(variables('effectiveVnetEnabled'), createObject('value', reference('network').outputs.functionSubnetId.value), createObject('value', ''))]",
           "enableVnetIntegration": {
             "value": "[variables('effectiveVnetEnabled')]"
+          },
+          "solutionType": {
+            "value": "[parameters('solutionType')]"
           }
         },
         "template": {
@@ -1022,6 +1025,10 @@
               "metadata": {
                 "description": "Enable VNet Integration and restrict public access (default: true)"
               }
+            },
+            "solutionType": {
+              "type": "string",
+              "defaultValue": "call-analytics"
             }
           },
           "variables": {
