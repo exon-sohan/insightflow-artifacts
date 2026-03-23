@@ -36,19 +36,22 @@
       "type": "securestring",
       "metadata": {
         "description": "Salesforce Instance URL"
-      }
+      },
+      "defaultValue": ""
     },
     "salesforceClientId": {
       "type": "securestring",
       "metadata": {
         "description": "Salesforce OAuth Client ID"
-      }
+      },
+      "defaultValue": ""
     },
     "salesforceClientSecret": {
       "type": "securestring",
       "metadata": {
         "description": "Salesforce OAuth Client Secret"
-      }
+      },
+      "defaultValue": ""
     },
     "salesforceSourceObject": {
       "type": "string",
@@ -147,6 +150,18 @@
       "metadata": {
         "description": "Customer contact email for platform tenant record"
       }
+    },
+    "solutionType": {
+      "type": "string",
+      "defaultValue": "call-analytics",
+      "allowedValues": [
+        "call-analytics",
+        "pharma-analytics",
+        "custom"
+      ],
+      "metadata": {
+        "description": "Solution type: call-analytics (Salesforce + ADF), pharma-analytics (file upload + analytics engine), or custom"
+      }
     }
   },
   "variables": {
@@ -182,7 +197,8 @@
     "effectiveBatchSize": "[if(equals(parameters('aiModel'), 'gpt-4o'), min(parameters('batchSize'), 5), parameters('batchSize'))]",
     "effectiveVnetEnabled": "[and(parameters('enablePrivateNetworking'), variables('tierConfig')[parameters('pricingTier')].enableVnet)]",
     "dataFactoryContributorRoleId": "673868aa-7521-48a0-acc6-0f60742d39f5",
-    "cognitiveServicesOpenAIUserRoleId": "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd"
+    "cognitiveServicesOpenAIUserRoleId": "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd",
+    "isCallAnalytics": "[equals(parameters('solutionType'), 'call-analytics')]"
   },
   "resources": {
     "dataFactoryResource": {
@@ -192,7 +208,8 @@
       "name": "[variables('dataFactoryName')]",
       "dependsOn": [
         "dataFactory"
-      ]
+      ],
+      "condition": "[variables('isCallAnalytics')]"
     },
     "functionAppDataFactoryAccess": {
       "type": "Microsoft.Authorization/roleAssignments",
@@ -207,7 +224,8 @@
       "dependsOn": [
         "dataFactory",
         "functions"
-      ]
+      ],
+      "condition": "[variables('isCallAnalytics')]"
     },
     "openAiResource": {
       "existing": true,
@@ -631,6 +649,50 @@
               },
               "dependsOn": [
                 "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}/{1}/{2}', parameters('storageAccountName'), 'default', 'analytics')]",
+              "properties": {
+                "publicAccess": "None"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices', parameters('storageAccountName'), 'default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}/{1}/{2}', parameters('storageAccountName'), 'default', 'narratives')]",
+              "properties": {
+                "publicAccess": "None"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices', parameters('storageAccountName'), 'default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}/{1}/{2}', parameters('storageAccountName'), 'default', 'batch-jobs')]",
+              "properties": {
+                "publicAccess": "None"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices', parameters('storageAccountName'), 'default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}/{1}/{2}', parameters('storageAccountName'), 'default', 'pipeline-configs')]",
+              "properties": {
+                "publicAccess": "None"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices', parameters('storageAccountName'), 'default')]"
               ]
             }
           ],
@@ -1118,6 +1180,10 @@
                     {
                       "name": "DYNAMIC_PIPELINE_NAME",
                       "value": "DynamicSalesforceExtractPipeline"
+                    },
+                    {
+                      "name": "SOLUTION_TYPE",
+                      "value": "[parameters('solutionType')]"
                     }
                   ],
                   "functionAppScaleLimit": "[if(variables('isConsumptionPlan'), 200, if(variables('isElasticPlan'), 20, 0))]"
@@ -1270,6 +1336,10 @@
           {
             "name": "PRICING_TIER",
             "value": "[parameters('pricingTier')]"
+          },
+          {
+            "name": "SOLUTION_TYPE",
+            "value": "[parameters('solutionType')]"
           }
         ],
         "scriptContent": "#!/bin/bash\nset -e\n\n# Set output file path with fallback\nOUTPUT_FILE=\"${AZ_SCRIPTS_OUTPUT_FILE:-/mnt/azscripts/azscriptoutput/scriptoutputs.json}\"\n\n# Skip if no registration URL provided\nif [ -z \"$REGISTRATION_URL\" ]; then\n  echo \"No platform registration URL provided, skipping registration\"\n  echo '{\"platformTenantId\":\"\",\"platformClientId\":\"\",\"platformRegistered\":\"skipped\"}' > \"$OUTPUT_FILE\"\n  exit 0\nfi\n\n# Map ARM pricing tier to platform tier\ncase \"$PRICING_TIER\" in\n  starter) PLATFORM_TIER=\"basic\" ;;\n  *) PLATFORM_TIER=\"$PRICING_TIER\" ;;\nesac\n\n# Build request body\nBODY=$(cat <<EOJSON\n{\n  \"functionAppUrl\": \"https://$FUNCTION_APP_URL\",\n  \"functionKey\": \"$FUNCTION_KEY\",\n  \"orgName\": \"$ORG_NAME\",\n  \"contactEmail\": \"$CONTACT_EMAIL\",\n  \"tier\": \"$PLATFORM_TIER\"\n}\nEOJSON\n)\n\n# Compute HMAC-SHA256 signature\nSIGNATURE=$(echo -n \"$BODY\" | openssl dgst -sha256 -hmac \"$REGISTRATION_SECRET\" | awk '{print $2}')\n\n# Call registration endpoint with retry\nMAX_RETRIES=3\nRETRY=0\nwhile [ $RETRY -lt $MAX_RETRIES ]; do\n  HTTP_CODE=$(curl -s -o /tmp/response.json -w '%{http_code}' \\\n    -X POST \"$REGISTRATION_URL\" \\\n    -H 'Content-Type: application/json' \\\n    -H \"x-platform-signature: $SIGNATURE\" \\\n    -d \"$BODY\" \\\n    --connect-timeout 10 \\\n    --max-time 30)\n\n  if [ \"$HTTP_CODE\" = \"201\" ] || [ \"$HTTP_CODE\" = \"200\" ]; then\n    break\n  fi\n\n  RETRY=$((RETRY + 1))\n  if [ $RETRY -lt $MAX_RETRIES ]; then\n    echo \"Registration attempt $RETRY failed (HTTP $HTTP_CODE), retrying in 5s...\"\n    sleep 5\n  fi\ndone\n\nif [ \"$HTTP_CODE\" != \"201\" ] && [ \"$HTTP_CODE\" != \"200\" ]; then\n  echo \"WARNING: Platform registration failed after $MAX_RETRIES attempts (HTTP $HTTP_CODE)\"\n  echo \"Response: $(cat /tmp/response.json)\"\n  echo \"Platform registration can be configured manually.\"\n  # Output empty values so ARM outputs don't fail\n  echo '{\"platformTenantId\":\"\",\"platformClientId\":\"\",\"platformRegistered\":\"false\"}' > \"$OUTPUT_FILE\"\n  exit 0\nfi\n\necho \"Platform registration successful (HTTP $HTTP_CODE)\"\nRESPONSE=$(cat /tmp/response.json)\n\n# Extract credentials from response\nTENANT_ID=$(echo \"$RESPONSE\" | python3 -c \"import sys,json; print(json.load(sys.stdin)['data']['tenantId'])\")\nCLIENT_ID=$(echo \"$RESPONSE\" | python3 -c \"import sys,json; print(json.load(sys.stdin)['data']['credentials']['clientId'])\")\nCLIENT_SECRET=$(echo \"$RESPONSE\" | python3 -c \"import sys,json; print(json.load(sys.stdin)['data']['credentials']['clientSecret'])\")\nTOKEN_ENDPOINT=$(echo \"$RESPONSE\" | python3 -c \"import sys,json; print(json.load(sys.stdin)['data']['credentials']['tokenEndpoint'])\")\n\n# Store credentials as Function App settings\naz functionapp config appsettings set \\\n  --name \"$FUNCTION_APP_NAME\" \\\n  --resource-group \"$RESOURCE_GROUP\" \\\n  --settings \\\n    PLATFORM_TENANT_ID=\"$TENANT_ID\" \\\n    PLATFORM_CLIENT_ID=\"$CLIENT_ID\" \\\n    PLATFORM_CLIENT_SECRET=\"$CLIENT_SECRET\" \\\n    PLATFORM_TOKEN_ENDPOINT=\"$TOKEN_ENDPOINT\" \\\n    PLATFORM_URL=\"$REGISTRATION_URL\" \\\n  --output none\n\necho \"Platform credentials stored in Function App settings\"\n\n# Output for ARM template\ncat <<EOJSON > \"$OUTPUT_FILE\"\n{\n  \"platformTenantId\": \"$TENANT_ID\",\n  \"platformClientId\": \"$CLIENT_ID\",\n  \"platformRegistered\": \"true\"\n}\nEOJSON\n"
@@ -1891,7 +1961,8 @@
       },
       "dependsOn": [
         "storage"
-      ]
+      ],
+      "condition": "[variables('isCallAnalytics')]"
     },
     "azureOpenAI": {
       "type": "Microsoft.Resources/deployments",
@@ -2187,7 +2258,8 @@
     },
     "dataFactoryName": {
       "type": "string",
-      "value": "[reference('dataFactory').outputs.dataFactoryName.value]"
+      "value": "[if(variables('isCallAnalytics'), reference('dataFactory').outputs.dataFactoryName.value, 'N/A')]",
+      "condition": "[variables('isCallAnalytics')]"
     },
     "functionAppUrl": {
       "type": "string",
@@ -2199,15 +2271,18 @@
     },
     "triggerPipelineUrl": {
       "type": "string",
-      "value": "[format('https://{0}/api/trigger-pipeline', reference('functions').outputs.functionAppUrl.value)]"
+      "value": "[format('https://{0}/api/trigger-pipeline', reference('functions').outputs.functionAppUrl.value)]",
+      "condition": "[variables('isCallAnalytics')]"
     },
     "checkPipelineStatusUrl": {
       "type": "string",
-      "value": "[format('https://{0}/api/check-pipeline-status', reference('functions').outputs.functionAppUrl.value)]"
+      "value": "[format('https://{0}/api/check-pipeline-status', reference('functions').outputs.functionAppUrl.value)]",
+      "condition": "[variables('isCallAnalytics')]"
     },
     "salesforceRemoteSiteUrl": {
       "type": "string",
-      "value": "[format('https://{0}', reference('functions').outputs.functionAppUrl.value)]"
+      "value": "[format('https://{0}', reference('functions').outputs.functionAppUrl.value)]",
+      "condition": "[variables('isCallAnalytics')]"
     },
     "functionAppKey": {
       "type": "string",
@@ -2239,7 +2314,8 @@
     },
     "keyVaultName": {
       "type": "string",
-      "value": "Not used - credentials stored securely in Data Factory"
+      "value": "Not used - credentials stored securely in Data Factory",
+      "condition": "[variables('isCallAnalytics')]"
     },
     "nextSteps": {
       "type": "string",
@@ -2247,7 +2323,8 @@
     },
     "updateSalesforceCredentials": {
       "type": "string",
-      "value": "To update Salesforce credentials, redeploy the application with new values or update the Salesforce linked service in Data Factory."
+      "value": "To update Salesforce credentials, redeploy the application with new values or update the Salesforce linked service in Data Factory.",
+      "condition": "[variables('isCallAnalytics')]"
     },
     "platformTenantId": {
       "type": "string",
@@ -2260,6 +2337,14 @@
     "platformRegistered": {
       "type": "string",
       "value": "[reference('platformRegistration').outputs.platformRegistered]"
+    },
+    "analyticsRunUrl": {
+      "type": "string",
+      "value": "[format('https://{0}.azurewebsites.net/api/analytics/run', reference('functions').outputs.functionAppName.value)]"
+    },
+    "solutionType": {
+      "type": "string",
+      "value": "[parameters('solutionType')]"
     }
   }
 }
