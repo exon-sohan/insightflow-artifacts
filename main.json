@@ -95,15 +95,13 @@
     },
     "aiModel": {
       "type": "string",
-      "defaultValue": "gpt-5-nano",
+      "defaultValue": "gpt-4.1-mini",
       "allowedValues": [
-        "gpt-5-nano",
-        "gpt-4o-nano",
-        "gpt-4o-mini",
-        "gpt-4o"
+        "gpt-4.1-mini",
+        "gpt-5.1"
       ],
       "metadata": {
-        "description": "AI Model selection"
+        "description": "Azure OpenAI model selection. Both support GlobalBatch SKU. gpt-4.1-mini deprecates 2026-10-14. gpt-5.1 deprecates 2027-05-15."
       }
     },
     "batchSize": {
@@ -2053,41 +2051,36 @@
           },
           "variables": {
             "modelDeployments": {
-              "gpt-5-nano": {
-                "name": "gpt-5-nano",
-                "model": "gpt-4o-mini",
-                "version": "2024-07-18",
+              "gpt-4.1-mini": {
+                "name": "gpt-4-1-mini",
+                "model": "gpt-4.1-mini",
+                "version": "2025-04-14",
                 "capacity": 10,
-                "deploymentType": "Standard"
+                "deploymentType": "GlobalStandard"
               },
-              "gpt-4o-nano": {
-                "name": "gpt-4o-nano",
-                "model": "gpt-4o-mini",
-                "version": "2024-07-18",
+              "gpt-5.1": {
+                "name": "gpt-5-1",
+                "model": "gpt-5.1",
+                "version": "2025-11-13",
                 "capacity": 10,
-                "deploymentType": "Standard"
-              },
-              "gpt-4o-mini": {
-                "name": "gpt-4o-mini",
-                "model": "gpt-4o-mini",
-                "version": "2024-07-18",
-                "capacity": 10,
-                "deploymentType": "Standard"
-              },
-              "gpt-4o": {
-                "name": "gpt-4o",
-                "model": "gpt-4o",
-                "version": "2024-08-06",
-                "capacity": 10,
-                "deploymentType": "Standard"
+                "deploymentType": "GlobalStandard"
               }
             },
-            "batchDeployment": {
-              "name": "gpt-4o-mini-batch",
-              "model": "gpt-4o-mini",
-              "version": "2024-07-18",
-              "capacity": 100,
-              "deploymentType": "GlobalBatch"
+            "batchDeployments": {
+              "gpt-4.1-mini": {
+                "name": "gpt-4-1-mini-batch",
+                "model": "gpt-4.1-mini",
+                "version": "2025-04-14",
+                "capacity": 100,
+                "deploymentType": "GlobalBatch"
+              },
+              "gpt-5.1": {
+                "name": "gpt-5-1-batch",
+                "model": "gpt-5.1",
+                "version": "2025-11-13",
+                "capacity": 100,
+                "deploymentType": "GlobalBatch"
+              }
             }
           },
           "resources": [
@@ -2203,16 +2196,16 @@
             {
               "type": "Microsoft.CognitiveServices/accounts/deployments",
               "apiVersion": "2024-10-01",
-              "name": "[format('{0}/{1}', parameters('aiProjectName'), variables('batchDeployment').name)]",
+              "name": "[format('{0}/{1}', parameters('aiProjectName'), variables('batchDeployments')[parameters('aiModel')].name)]",
               "sku": {
-                "name": "[variables('batchDeployment').deploymentType]",
-                "capacity": "[variables('batchDeployment').capacity]"
+                "name": "[variables('batchDeployments')[parameters('aiModel')].deploymentType]",
+                "capacity": "[variables('batchDeployments')[parameters('aiModel')].capacity]"
               },
               "properties": {
                 "model": {
                   "format": "OpenAI",
-                  "name": "[variables('batchDeployment').model]",
-                  "version": "[variables('batchDeployment').version]"
+                  "name": "[variables('batchDeployments')[parameters('aiModel')].model]",
+                  "version": "[variables('batchDeployments')[parameters('aiModel')].version]"
                 }
               },
               "dependsOn": [
@@ -2240,7 +2233,7 @@
             },
             "batchDeploymentName": {
               "type": "string",
-              "value": "[variables('batchDeployment').name]"
+              "value": "[variables('batchDeployments')[parameters('aiModel')].name]"
             },
             "aiApiKey": {
               "type": "string",
