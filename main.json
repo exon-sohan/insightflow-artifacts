@@ -2064,22 +2064,6 @@
             }
           },
           "variables": {
-            "modelDeployments": {
-              "gpt-4.1-mini": {
-                "name": "gpt-4-1-mini",
-                "model": "gpt-4.1-mini",
-                "version": "2025-04-14",
-                "capacity": 10,
-                "deploymentType": "GlobalStandard"
-              },
-              "gpt-5.1": {
-                "name": "gpt-5-1",
-                "model": "gpt-5.1",
-                "version": "2025-11-13",
-                "capacity": 10,
-                "deploymentType": "GlobalStandard"
-              }
-            },
             "batchDeployments": {
               "gpt-4.1-mini": {
                 "name": "gpt-4-1-mini-batch",
@@ -2190,26 +2174,6 @@
             {
               "type": "Microsoft.CognitiveServices/accounts/deployments",
               "apiVersion": "2024-10-01",
-              "name": "[format('{0}/{1}', parameters('aiProjectName'), variables('modelDeployments')[parameters('aiModel')].name)]",
-              "sku": {
-                "name": "[variables('modelDeployments')[parameters('aiModel')].deploymentType]",
-                "capacity": "[variables('modelDeployments')[parameters('aiModel')].capacity]"
-              },
-              "properties": {
-                "model": {
-                  "format": "OpenAI",
-                  "name": "[variables('modelDeployments')[parameters('aiModel')].model]",
-                  "version": "[variables('modelDeployments')[parameters('aiModel')].version]"
-                },
-                "raiPolicyName": "Microsoft.DefaultV2"
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.CognitiveServices/accounts', parameters('aiProjectName'))]"
-              ]
-            },
-            {
-              "type": "Microsoft.CognitiveServices/accounts/deployments",
-              "apiVersion": "2024-10-01",
               "name": "[format('{0}/{1}', parameters('aiProjectName'), variables('batchDeployments')[parameters('aiModel')].name)]",
               "sku": {
                 "name": "[variables('batchDeployments')[parameters('aiModel')].deploymentType]",
@@ -2223,8 +2187,7 @@
                 }
               },
               "dependsOn": [
-                "[resourceId('Microsoft.CognitiveServices/accounts', parameters('aiProjectName'))]",
-                "[resourceId('Microsoft.CognitiveServices/accounts/deployments', parameters('aiProjectName'), variables('modelDeployments')[parameters('aiModel')].name)]"
+                "[resourceId('Microsoft.CognitiveServices/accounts', parameters('aiProjectName'))]"
               ]
             }
           ],
@@ -2243,7 +2206,7 @@
             },
             "deploymentName": {
               "type": "string",
-              "value": "[variables('modelDeployments')[parameters('aiModel')].name]"
+              "value": "[variables('batchDeployments')[parameters('aiModel')].name]"
             },
             "batchDeploymentName": {
               "type": "string",
