@@ -113,6 +113,26 @@
         "description": "Batch processing size"
       }
     },
+    "aiSku": {
+      "type": "string",
+      "defaultValue": "GlobalBatch",
+      "allowedValues": [
+        "GlobalBatch",
+        "DataZoneBatch"
+      ],
+      "metadata": {
+        "description": "Azure OpenAI Batch SKU. GlobalBatch (production) requires approved quota. DataZoneBatch (POC/demo) works on fresh subscriptions but capped at low throughput."
+      }
+    },
+    "aiCapacity": {
+      "type": "int",
+      "defaultValue": 100,
+      "minValue": 1,
+      "maxValue": 1000,
+      "metadata": {
+        "description": "Batch deployment capacity in thousands of enqueued tokens. Use 1 for DataZoneBatch on fresh subscriptions; 100+ for production GlobalBatch."
+      }
+    },
     "enablePrivateNetworking": {
       "type": "bool",
       "defaultValue": false,
@@ -2004,6 +2024,12 @@
           "aiModel": {
             "value": "[parameters('aiModel')]"
           },
+          "aiSku": {
+            "value": "[parameters('aiSku')]"
+          },
+          "aiCapacity": {
+            "value": "[parameters('aiCapacity')]"
+          },
           "vnetId": "[if(variables('effectiveVnetEnabled'), createObject('value', reference('network').outputs.vnetId.value), createObject('value', ''))]",
           "privateEndpointSubnetId": "[if(variables('effectiveVnetEnabled'), createObject('value', reference('network').outputs.privateEndpointSubnetId.value), createObject('value', ''))]",
           "enablePrivateEndpoint": {
@@ -2043,6 +2069,24 @@
                 "description": "AI Model to deploy (must match outer allowedValues)"
               }
             },
+            "aiSku": {
+              "type": "string",
+              "defaultValue": "GlobalBatch",
+              "allowedValues": [
+                "GlobalBatch",
+                "DataZoneBatch"
+              ],
+              "metadata": {
+                "description": "Batch SKU for OpenAI deployment"
+              }
+            },
+            "aiCapacity": {
+              "type": "int",
+              "defaultValue": 100,
+              "metadata": {
+                "description": "Capacity in thousands of enqueued tokens"
+              }
+            },
             "vnetId": {
               "type": "string",
               "metadata": {
@@ -2068,16 +2112,12 @@
               "gpt-4.1-mini": {
                 "name": "gpt-4-1-mini-batch",
                 "model": "gpt-4.1-mini",
-                "version": "2025-04-14",
-                "capacity": 100,
-                "deploymentType": "GlobalBatch"
+                "version": "2025-04-14"
               },
               "gpt-5.1": {
                 "name": "gpt-5-1-batch",
                 "model": "gpt-5.1",
-                "version": "2025-11-13",
-                "capacity": 100,
-                "deploymentType": "GlobalBatch"
+                "version": "2025-11-13"
               }
             }
           },
@@ -2176,8 +2216,8 @@
               "apiVersion": "2024-10-01",
               "name": "[format('{0}/{1}', parameters('aiProjectName'), variables('batchDeployments')[parameters('aiModel')].name)]",
               "sku": {
-                "name": "[variables('batchDeployments')[parameters('aiModel')].deploymentType]",
-                "capacity": "[variables('batchDeployments')[parameters('aiModel')].capacity]"
+                "name": "[parameters('aiSku')]",
+                "capacity": "[parameters('aiCapacity')]"
               },
               "properties": {
                 "model": {
