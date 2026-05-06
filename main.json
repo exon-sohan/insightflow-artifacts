@@ -724,6 +724,30 @@
               "dependsOn": [
                 "[resourceId('Microsoft.Storage/storageAccounts/blobServices', parameters('storageAccountName'), 'default')]"
               ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/queueServices",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}/default', parameters('storageAccountName'))]",
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/queueServices/queues",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}/default/sync-chunks', parameters('storageAccountName'))]",
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/queueServices', parameters('storageAccountName'), 'default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/queueServices/queues",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}/default/sync-chunks-poison', parameters('storageAccountName'))]",
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/queueServices', parameters('storageAccountName'), 'default')]"
+              ]
             }
           ],
           "outputs": {
