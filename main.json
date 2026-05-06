@@ -180,6 +180,14 @@
       "metadata": {
         "description": "Solution type: call-analytics (Salesforce + ADF), pharma-analytics (file upload + analytics engine), or custom"
       }
+    },
+    "aiCompletionMode": {
+      "type": "string",
+      "defaultValue": "Batch",
+      "allowedValues": ["Batch", "Sync", "Both"],
+      "metadata": {
+        "description": "AI completion mode. 'Batch' = cheap, 24h SLA. 'Sync' = ~2x cost, completes in minutes. 'Both' = customer chooses per-pipeline at runtime. Sponsorship/Free Azure subscriptions cannot use Batch — pick 'Sync'."
+      }
     }
   },
   "variables": {
@@ -216,7 +224,11 @@
     "effectiveVnetEnabled": "[and(parameters('enablePrivateNetworking'), variables('tierConfig')[parameters('pricingTier')].enableVnet)]",
     "dataFactoryContributorRoleId": "673868aa-7521-48a0-acc6-0f60742d39f5",
     "cognitiveServicesOpenAIUserRoleId": "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd",
-    "isCallAnalytics": "[equals(parameters('solutionType'), 'call-analytics')]"
+    "isCallAnalytics": "[equals(parameters('solutionType'), 'call-analytics')]",
+    "enableBatchDeployment": "[or(equals(parameters('aiCompletionMode'), 'Batch'), equals(parameters('aiCompletionMode'), 'Both'))]",
+    "enableStandardDeployment": "[or(equals(parameters('aiCompletionMode'), 'Sync'), equals(parameters('aiCompletionMode'), 'Both'))]",
+    "defaultCompletionMode": "[if(equals(parameters('aiCompletionMode'), 'Sync'), 'sync', 'batch')]",
+    "enabledCompletionModes": "[if(equals(parameters('aiCompletionMode'), 'Both'), 'batch,sync', toLower(parameters('aiCompletionMode')))]"
   },
   "resources": {
     "dataFactoryResource": {
@@ -891,6 +903,12 @@
           },
           "solutionType": {
             "value": "[parameters('solutionType')]"
+          },
+          "defaultCompletionMode": {
+            "value": "[variables('defaultCompletionMode')]"
+          },
+          "enabledCompletionModes": {
+            "value": "[variables('enabledCompletionModes')]"
           }
         },
         "template": {
@@ -1047,6 +1065,20 @@
             "solutionType": {
               "type": "string",
               "defaultValue": "call-analytics"
+            },
+            "defaultCompletionMode": {
+              "type": "string",
+              "defaultValue": "batch",
+              "metadata": {
+                "description": "Default AI completion mode: 'batch' or 'sync'"
+              }
+            },
+            "enabledCompletionModes": {
+              "type": "string",
+              "defaultValue": "batch",
+              "metadata": {
+                "description": "Comma-separated list of enabled completion modes, e.g. 'batch' or 'sync' or 'batch,sync'"
+              }
             }
           },
           "variables": {
@@ -1209,6 +1241,22 @@
                     {
                       "name": "SOLUTION_TYPE",
                       "value": "[parameters('solutionType')]"
+                    },
+                    {
+                      "name": "DEFAULT_COMPLETION_MODE",
+                      "value": "[parameters('defaultCompletionMode')]"
+                    },
+                    {
+                      "name": "ENABLED_COMPLETION_MODES",
+                      "value": "[parameters('enabledCompletionModes')]"
+                    },
+                    {
+                      "name": "SYNC_CHUNK_SIZE",
+                      "value": "100"
+                    },
+                    {
+                      "name": "SYNC_CHUNK_CONCURRENCY",
+                      "value": "5"
                     }
                   ],
                   "functionAppScaleLimit": "[if(variables('isConsumptionPlan'), 200, if(variables('isElasticPlan'), 20, 0))]"
@@ -2034,6 +2082,12 @@
           "privateEndpointSubnetId": "[if(variables('effectiveVnetEnabled'), createObject('value', reference('network').outputs.privateEndpointSubnetId.value), createObject('value', ''))]",
           "enablePrivateEndpoint": {
             "value": "[variables('effectiveVnetEnabled')]"
+          },
+          "enableBatchDeployment": {
+            "value": "[variables('enableBatchDeployment')]"
+          },
+          "enableStandardDeployment": {
+            "value": "[variables('enableStandardDeployment')]"
           }
         },
         "template": {
@@ -2105,6 +2159,20 @@
               "metadata": {
                 "description": "Enable private endpoint (default: true)"
               }
+            },
+            "enableBatchDeployment": {
+              "type": "bool",
+              "defaultValue": true,
+              "metadata": {
+                "description": "Provision the GlobalBatch OpenAI deployment. Set to false for Sponsorship/Free subscriptions that cannot use Batch."
+              }
+            },
+            "enableStandardDeployment": {
+              "type": "bool",
+              "defaultValue": false,
+              "metadata": {
+                "description": "Provision a Standard (sync chat/completions) OpenAI deployment. Required for sync mode."
+              }
             }
           },
           "variables": {
@@ -2118,6 +2186,20 @@
                 "name": "gpt-5-1-batch",
                 "model": "gpt-5.1",
                 "version": "2025-11-13"
+              }
+            },
+            "standardDeployments": {
+              "gpt-4.1-mini": {
+                "name": "gpt-4-1-mini",
+                "model": "gpt-4.1-mini",
+                "version": "2025-04-14",
+                "capacity": 10
+              },
+              "gpt-5.1": {
+                "name": "gpt-5-1",
+                "model": "gpt-5.1",
+                "version": "2025-11-13",
+                "capacity": 10
               }
             }
           },
@@ -2212,6 +2294,28 @@
               ]
             },
             {
+              "condition": "[parameters('enableStandardDeployment')]",
+              "type": "Microsoft.CognitiveServices/accounts/deployments",
+              "apiVersion": "2024-10-01",
+              "name": "[format('{0}/{1}', parameters('aiProjectName'), variables('standardDeployments')[parameters('aiModel')].name)]",
+              "sku": {
+                "name": "Standard",
+                "capacity": "[variables('standardDeployments')[parameters('aiModel')].capacity]"
+              },
+              "properties": {
+                "model": {
+                  "format": "OpenAI",
+                  "name": "[variables('standardDeployments')[parameters('aiModel')].model]",
+                  "version": "[variables('standardDeployments')[parameters('aiModel')].version]"
+                },
+                "raiPolicyName": "Microsoft.DefaultV2"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.CognitiveServices/accounts', parameters('aiProjectName'))]"
+              ]
+            },
+            {
+              "condition": "[parameters('enableBatchDeployment')]",
               "type": "Microsoft.CognitiveServices/accounts/deployments",
               "apiVersion": "2024-10-01",
               "name": "[format('{0}/{1}', parameters('aiProjectName'), variables('batchDeployments')[parameters('aiModel')].name)]",
