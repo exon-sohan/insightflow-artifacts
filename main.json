@@ -1123,7 +1123,7 @@
               },
               "properties": {
                 "reserved": false,
-                "maximumElasticWorkerCount": "[if(variables('isElasticPlan'), 20, if(variables('isConsumptionPlan'), 1, 0))]"
+                "maximumElasticWorkerCount": "[if(variables('isElasticPlan'), 20, 0)]"
               }
             },
             {
