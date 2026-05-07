@@ -2323,7 +2323,7 @@
               "apiVersion": "2024-10-01",
               "name": "[format('{0}/{1}', parameters('aiProjectName'), variables('standardDeployments')[parameters('aiModel')].name)]",
               "sku": {
-                "name": "Standard",
+                "name": "GlobalStandard",
                 "capacity": "[variables('standardDeployments')[parameters('aiModel')].capacity]"
               },
               "properties": {
